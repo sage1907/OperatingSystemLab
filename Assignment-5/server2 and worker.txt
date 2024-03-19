@@ -1,0 +1,171 @@
+//server2.c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <signal.h>
+
+#define SHM_KEY 1234
+
+struct task {
+    int data[100];
+    int size;
+    pid_t worker_pid;
+    int status;
+};
+
+void cleanup(int signum) {
+    printf("Server: Terminating\n");
+    exit(EXIT_SUCCESS);
+}
+
+int main() {
+    signal(SIGINT, cleanup);
+
+    int shm_id = shmget(SHM_KEY, sizeof(struct task), IPC_CREAT | IPC_EXCL | 0666);
+    if (shm_id == -1) {
+        shm_id = shmget(SHM_KEY, sizeof(struct task), 0666);
+        if (shm_id == -1) {
+            perror("shmget");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    struct task *solve = (struct task *)shmat(shm_id, NULL, 0);
+    if (solve == (void *)-1) {
+        perror("shmat");
+        exit(EXIT_FAILURE);
+    }
+
+    while (1) {
+        while (solve->status != 1 && solve->status != -1) {
+            sleep(1);
+        }
+
+        if (solve->status == -1) {
+            // Server terminated
+            cleanup(0);
+        }
+
+       
+        solve->size = rand() % 10 + 1;
+        for (int i = 0; i < solve->size; i++) {
+            solve->data[i] = rand() % 100;
+        }
+
+        printf("Server: Array before sorting: ");
+        for (int i = 0; i < solve->size; i++) {
+            printf("%d ", solve->data[i]);
+        }
+        printf("\n");
+
+        printf("Server: Put %d numbers in data[] for sorting\n", solve->size);
+        solve->status = 1;
+
+        
+        while (solve->status != 3 && solve->status != -1) {
+            sleep(1);
+        }
+
+        if (solve->status == -1) {
+            // Server terminated
+            cleanup(0);
+        }
+
+        
+        printf("Server: Sorted data[] by Worker %d: ", solve->worker_pid);
+        for (int i = 0; i < solve->size; i++) {
+            printf("%d ", solve->data[i]);
+        }
+        printf("\n");
+
+        solve->status = 4;
+    }
+
+    return 0;
+}
+
+
+//worker2.c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <pthread.h>
+
+#define SHM_KEY 1234
+
+struct task {
+    int data[100];
+    int size;
+    pid_t worker_pid;
+    int status;
+};
+
+
+
+void cleanup(int signum) {
+    printf("Worker %d: Terminating\n", getpid());
+    exit(EXIT_SUCCESS);
+}
+
+void insertionSort(int arr[], int n) {
+    int i, key, j;
+    for (i = 1; i < n; i++) {
+        key = arr[i];
+        j = i - 1;
+
+        while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+    }
+}
+
+
+int main() {
+    signal(SIGINT, cleanup);
+	
+    int shm_id = shmget(SHM_KEY, sizeof(struct task), 0666);
+    if (shm_id == -1) {
+        perror("shmget");
+        exit(EXIT_FAILURE);
+    }
+
+    struct task *solve = (struct task *)shmat(shm_id, NULL, 0);
+    if (solve == (void *)-1) {
+        perror("shmat");
+        exit(EXIT_FAILURE);
+    }
+
+    while (solve->status != -1) {
+        while (solve->status != 1 && solve->status != -1) {
+            sleep(1);
+        }
+
+        if (solve->status == -1) {
+            // Server terminated
+            cleanup(0);
+        }
+
+        solve->status = 2;
+        solve->worker_pid = getpid();
+        printf("Worker %d: Sorting %d numbers\n", getpid(), solve->size);
+
+        insertionSort(solve->data, solve->size);
+
+        printf("Worker %d: Sorting completed\n", getpid());
+        solve->status = 3;
+    }
+
+    return 0;
+ }
