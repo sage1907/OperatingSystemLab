@@ -37,7 +37,6 @@ int init_File_dd(const char *fname, int bsize, int bno) {
     // Write superblock to file
     write(fd, &super, sizeof(Superblock));
 
-    // Close the file
     close(fd);
 
     return 0;  // Success
